@@ -13,6 +13,7 @@
 # limitations under the License.
 import os
 import sys
+import subprocess
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(__dir__)
@@ -141,14 +142,35 @@ def sorted_boxes(dt_boxes):
 
 def main(args):
     image_file_list = get_image_file_list(args.image_dir)
+    image_file_list = image_file_list[args.process_id::args.total_process_num]
     text_sys = TextSystem(args)
     is_visualize = True
+    is_textfile = True
     font_path = args.vis_font_path
     drop_score = args.drop_score
     for image_file in image_file_list:
         img, flag = check_and_read_gif(image_file)
         if not flag:
+            img_ind= image_file.rfind('/')
+            filename= image_file[-(len(image_file)-img_ind-1):]
+            filename=filename[:-4]
             img = cv2.imread(image_file)
+            size = img.shape[0] * img.shape[1]
+            # print(img.shape[0] * img.shape[1])
+            if(size > 15000000):
+              ratio = 14999999 / size
+              img = cv2.resize(img, None, fx = ratio, fy = ratio, interpolation = cv2.INTER_CUBIC)
+        if flag:
+            image_file= img
+            img_ind= img.rfind('/')
+            filename= image_file[-(len(image_file)-img_ind-1):]
+            filename=filename[:-4]
+            img = cv2.imread(img) 
+            size = img.shape[0] * img.shape[1]
+            # print(img.shape[0] * img.shape[1])
+            if(size > 15000000):
+              ratio = 14999999 / size
+              img = cv2.resize(img, None, fx = ratio, fy = ratio, interpolation = cv2.INTER_CUBIC)
         if img is None:
             logger.info("error in loading image:{}".format(image_file))
             continue
@@ -156,7 +178,11 @@ def main(args):
         dt_boxes, rec_res = text_sys(img)
         elapse = time.time() - starttime
         logger.info("Predict time of %s: %.3fs" % (image_file, elapse))
-
+        output = []
+        for box, rec in zip(dt_boxes, rec_res):
+            text, score = rec
+            output.append(([list(x) for x in box], rec))
+            logger.info("{}, {:.3f}".format(text, score))
         for text, score in rec_res:
             logger.info("{}, {:.3f}".format(text, score))
 
@@ -182,6 +208,32 @@ def main(args):
             logger.info("The visualized image saved in {}".format(
                 os.path.join(draw_img_save, os.path.basename(image_file))))
 
+        if is_textfile:
+            fname = str(os.path.basename(image_file))
+            fname = fname.replace(".jpg", ".txt")
+            with open(os.path.join(draw_img_save, fname), "w") as f:
+                f.write(str((img.shape[1], img.shape[0])))
+                f.write("\n")
+                for det in output:
+                    f.write(str(det))
+                    f.write("\n")
+            logger.info("The extracted text saved in {}".format(
+                os.path.join(draw_img_save, fname)))
+
 
 if __name__ == "__main__":
-    main(utility.parse_args())
+    args = utility.parse_args()
+    if args.use_mp:
+        p_list = []
+        total_process_num = args.total_process_num
+        for process_id in range(total_process_num):
+            cmd = [sys.executable, "-u"] + sys.argv + [
+                "--process_id={}".format(process_id),
+                "--use_mp={}".format(False)
+            ]
+            p = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stdout)
+            p_list.append(p)
+        for p in p_list:
+            p.wait()
+    else:
+        main(args)
